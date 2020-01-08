@@ -4,6 +4,7 @@ import json
 import argparse
 import requests
 import logging
+import xml2ass
 import subprocess
 from time import sleep, time
 from common import Download, TqdmLoggingHandler, RunCmdException
@@ -204,7 +205,8 @@ class Bilibili:
             "Cookie":"CURRENT_FNVAL=16;CURRENT_QUALITY=80",
         }
         response = requests.get(url,headers=cls.AttachHeaders(header))
-        Download.files('{}\\{}.xml'.format(cls.downdir['downloaded'],videoname),response,'ISO-8859-1')
+        Download.files('{}\\{}.xml'.format(cls.downdir['cache'],videoname),response,'ISO-8859-1')
+
 
     @classmethod
     def DownVideo(cls, d_videourl):
@@ -246,6 +248,7 @@ class Bilibili:
     @classmethod
     def MergeVideo(cls, videoname):
         # ffmpeg argument use "/",cmd use "//"
+        # FIXME:
         if cls.tl.av_separated:
             ffmpegcmd = "ffmpeg_static\\bin\\ffmpeg -loglevel error -i {0}/{1}1.mp4 -i {0}/{1}2.mp4 -c:v copy -c:a aac -y {2}/output{1}.mp4".format(
                 cls.downdir['cache'], cls.tl.threadpoolname,
@@ -302,18 +305,6 @@ class Bilibili:
             Bilibili.logger.info("clean complete")
 
     @classmethod
-    def Run(cls, url):
-        videoname, d_videourl, cid, _, _,= cls.ResquestMainWeb(url)
-        videoname = re.sub(r"[\\\/\:\*\?\"\<\>\|]+", "-", videoname)
-        cls.tl.threadpoolname = current_thread().name
-        Bilibili.logger.info("start download:{}".format(videoname))
-        cls.DownBarrages(cid,videoname)
-        sleep(1)
-        cls.DownVideo(d_videourl)
-        Bilibili.logger.info("download complete:{}".format(videoname))
-        cls.MergeVideo(videoname)
-
-    @classmethod
     def Down(cls, downlist=None):
         """downlist = ['1','3:6','7']
            downlist = 'all'
@@ -358,6 +349,33 @@ class Bilibili:
                     Bilibili.logger.error(e)
         # Bilibili.logger.info("all video download complete")
 
+
+    @staticmethod
+    def ParseXml(assfile,xmlfile):
+        xmlparser = xml2ass.GenerateAss(assfile,xmlfile)
+        xmlparser.run()
+
+    @classmethod
+    def Run(cls, url):
+        videoname, d_videourl, cid, _, _,= cls.ResquestMainWeb(url)
+        videoname = re.sub(r"[\\\/\:\*\?\"\<\>\|]+", "-", videoname)
+        cls.tl.threadpoolname = current_thread().name
+        Bilibili.logger.info("start download:{}".format(videoname))
+        cls.DownBarrages(cid,videoname)
+        st_download  = '{}\\{}.ass'.format(cls.downdir['downloaded'],videoname)
+        st_cache = '{}\\{}.xml'.format(cls.downdir['cache'],videoname)
+        try:
+            t_ass = Thread(target=cls.ParseXml,args=(st_download,st_cache))
+            t_ass.start()
+            t_ass.join(5)
+        except RuntimeError:
+            Bilibili.logger.error('xml barrages conver to ass failed:{}'.format(videoname))
+        sleep(1)
+        cls.DownVideo(d_videourl)
+        Bilibili.logger.info("download complete:{}".format(videoname))
+        cls.MergeVideo(videoname)
+
+
     @classmethod
     def Main(cls,debug_url = None,debug_downlist = None):
         cls.MakeDirs()
@@ -393,6 +411,8 @@ class Bilibili:
         else:
             down_list = debug_downlist
         for url in url_list:
+            if not url.startswith('https://www.'):
+                url = 'https://www.' + url
             cls.mainurl = url
             cls.Down(downlist=down_list)
         else:

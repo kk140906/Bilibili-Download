@@ -6,8 +6,6 @@ from tqdm import tqdm
 class Download(object):
     """Download file or video"""
     
-    currentsize = 0
-
     def __init__(self):
         pass
 
