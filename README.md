@@ -1,5 +1,7 @@
 # Bilibili Download
 
+![](https://img.shields.io/badge/python%20version-3.8.1-green)
+
 - 安装必备模块:
   
     >pip3 install tqdm requests
