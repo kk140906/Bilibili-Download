@@ -1,5 +1,6 @@
 import re
 import os
+import shutil
 import json
 import argparse
 import requests
@@ -15,13 +16,13 @@ from concurrent.futures import ThreadPoolExecutor, wait
 class Bilibili:
 
     mainurl = None
-    downdir = {"cache": "cache", "downloaded": "downloaded"}
+    downdir = {'cache': "cache", 'downloaded': "downloaded"}
     lockgetplayinfo = Lock()
     tl = local()
     # downcomplete = Condition()
     logger = logging.getLogger(__name__)
     logger.setLevel(logging.INFO)
-    logfile = "{}\\bilibili.log".format(downdir['downloaded'])
+    logfile = f"{downdir['downloaded']}\\bilibili.log"
 
     def __init__(self):
         pass
@@ -32,17 +33,17 @@ class Bilibili:
         group = parser.add_argument_group(title='necessary options')
         mutex = group.add_mutually_exclusive_group()
         mutex.add_argument('-iu',
-                           metavar="url",
-                           dest="input_url",
+                           metavar='url',
+                           dest='input_url',
                            nargs='+',
-                           help='a serise of url download list')
+                           help='a serise of url download list;')
         mutex.add_argument('-if',
                            metavar='url_file',
                            dest="input_url_file",
-                           help="a file of url download list")
+                           help='a file of url download list;')
         parser.add_argument('-dp',
                             metavar='p',
-                            dest="down_play_list",
+                            dest='down_play_list',
                             nargs='+',
                             help='download play list in a url;')
         return parser
@@ -76,24 +77,24 @@ class Bilibili:
         try:
             p_result = subprocess.run(cmd,
                                       capture_output=True,
-                                      encoding="GB2312",
+                                      encoding='GB2312',
                                       shell=True)
             if p_result.stdout:
                 return p_result.stdout
             if p_result.stderr:
                 raise RunCmdException(p_result.stderr)
         except FileNotFoundError:
-            raise RunCmdException("Cmd '{}' can't run in subprocess".format(cmd))
+            raise RunCmdException(f"Cmd '{cmd}' can't run in subprocess")
 
     @staticmethod
     def AttachHeaders(header: dict = None):
         defaultheader = {
-            "Connection": "keep-alive",
-            "User-Agent":
+            'Connection': "keep-alive",
+            'User-Agent':
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.88 Safari/537.36",
-            "Accept": "*/*",
-            "Accept-Encoding": "gzip, deflate, br",
-            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+            'Accept': "*/*",
+            'Accept-Encoding': "gzip, deflate, br",
+            'Accept-Language': "zh-CN,zh;q=0.9,en;q=0.8",
         }
         if header is not None:
             header.update(defaultheader)
@@ -128,40 +129,36 @@ class Bilibili:
         singlelist = [int(i) for i in downlist if ':' not in i]
         return singlelist + sum(pairlist, [])
 
+    @staticmethod
+    def ExtractPlayInfo(response,epid = None):
+        return re.search(
+                    r"(?<=<script>window.__playinfo__=)(.*?)(?=</script><script>)",
+                    response.text).group(0)
+
+    @staticmethod
+    def ExtractPlayState(response):
+        return re.search(
+                r"(?<=<script>window.__INITIAL_STATE__=)(.*?)(?=\;\(function\(\)\{)",
+                response.text).group(0)
+
+
     @classmethod
     def ResquestMainWeb(cls, url):
         with cls.lockgetplayinfo:
             header = {
-                "Host":cls.ParseHost(url),
-                "Sec-Fetch-Mode":"navigate",
-                "Sec-Fetch-Site":"same-origin",
-                "Sec-Fetch-User":"?1",
-                "Upgrade-Insecure-Requests":"1",
-                "Cookie":"CURRENT_FNVAL=16;CURRENT_QUALITY=80",
+                'Host':cls.ParseHost(url),
+                'Sec-Fetch-Mode':"navigate",
+                'Sec-Fetch-Site':"same-origin",
+                'Sec-Fetch-User':"?1",
+                'Upgrade-Insecure-Requests':"1",
+                'Cookie':"CURRENT_FNVAL=16;CURRENT_QUALITY=80;INTVER=1",
             }
             response = requests.get(url, headers=cls.AttachHeaders(header))
-            Download.files("{}\\mainweb.html".format(cls.downdir['cache']),response)
-            s_videourl = re.search(
-                r"(?<=<script>window.__playinfo__=)(.*?)(?=</script><script>)",
-                response.text).group(0)
-            s_videolist = re.search(
-                r"(?<=<script>window.__INITIAL_STATE__=)(.*?)(?=\;\(function\(\)\{)",
-                response.text).group(0)
-            Download.files("{}\\videourl.json".format(cls.downdir['cache']),s_videourl)
-            Download.files("{}\\videolist.json".format(cls.downdir['cache']),s_videolist)
-            d_videourl = json.loads(s_videourl)
-            d_videolist = json.loads(s_videolist)
-            # video audio is separated
-            try:
-                videourl = d_videourl['data']['dash']['video'][0]['baseUrl']
-                audiourl = d_videourl['data']['dash']['audio'][0]['baseUrl']
-                cls.tl.av_separated = True
-                d_videourl = {1: videourl, 2: audiourl}
-            # Segmented video and video audio no separated
-            except KeyError:
-                cls.tl.av_separated = False
-                d_videourl = {videopart['order']:videopart['url'] for videopart in d_videourl['data']['durl']}
+            Download.files(f"{cls.downdir['cache']}\\mainweb.html",response)
 
+            s_videolist = cls.ExtractPlayState(response)
+            Download.files(f"{cls.downdir['cache']}\\videolist.json",s_videolist)
+            d_videolist = json.loads(s_videolist)
             # video
             try:
                 videoname = d_videolist['videoData']['title']
@@ -176,17 +173,42 @@ class Bilibili:
                 totalvideonums = d_videolist['epList'].__len__()
                 d_videoid = {videoid + 1: d_videolist['epList'][videoid]['id'] for videoid in range(totalvideonums)}
                 cid = d_videolist['epInfo']['cid']
+                epid = d_videolist['epList'][0]['id']
+                
+            # FIXME:ssid
+            if 'https://www.bilibili.com/bangumi/play/ss' in url:
+                Bilibili.logger.warning(f'{url} is a playlist url,converted to the first video url')
+                cls.mainurl = f'https://www.bilibili.com/bangumi/play/ep{epid}'
+                response = requests.get(cls.mainurl, headers=cls.AttachHeaders(header))
+
+            s_videourl = cls.ExtractPlayInfo(response)
+            Download.files(f"{cls.downdir['cache']}\\videourl.json",s_videourl)
+            d_videourl = json.loads(s_videourl)
+
+
+            # video audio is separated
+            try:
+                videourl = d_videourl['data']['dash']['video'][0]['baseUrl']
+                audiourl = d_videourl['data']['dash']['audio'][0]['baseUrl']
+                cls.tl.av_separated = True
+                d_videourl = {1: videourl, 2: audiourl}
+            # Segmented video and video audio no separated
+            except KeyError:
+                cls.tl.av_separated = False
+                d_videourl = {videopart['order']:videopart['url'] for videopart in d_videourl['data']['durl']}
+
+
             return videoname, d_videourl,cid,totalvideonums, d_videoid
 
     @classmethod
     def StartDownVideo(cls, namepath, videourl):
         originhost = cls.ParseHost(cls.mainurl)
         header = {
-            "Host": cls.ParseHost(videourl),
-            "Origin": "https://{}".format(originhost),
-            "Referer": "https://{}".format(originhost),
-            "Sec-Fetch-Mode": "cors",
-            "Sec-Fetch-Site": "cross-site",
+            'Host': cls.ParseHost(videourl),
+            'Origin': "https://{}".format(originhost),
+            'Referer': "https://{}".format(originhost),
+            'Sec-Fetch-Mode': "cors",
+            'Sec-Fetch-Site': "cross-site",
         }
         reponse = requests.get(videourl,
                                headers=cls.AttachHeaders(header),
@@ -195,34 +217,23 @@ class Bilibili:
 
     @classmethod
     def DownBarrages(cls,cid,videoname):
-        url = "https://api.bilibili.com/x/v1/dm/list.so?oid={}".format(cid)
+        url = f"https://api.bilibili.com/x/v1/dm/list.so?oid={cid}"
         header = {
-            "Host":cls.ParseHost(url),
-            "Sec-Fetch-Mode":"navigate",
-            "Sec-Fetch-Site":"same-origin",
-            "Sec-Fetch-User":"?1",
-            "Upgrade-Insecure-Requests":"1",
-            "Cookie":"CURRENT_FNVAL=16;CURRENT_QUALITY=80",
+            'Host':cls.ParseHost(url),
+            'Sec-Fetch-Mode':"navigate",
+            'Sec-Fetch-Site':"same-origin",
+            'Sec-Fetch-User':"?1",
+            'Upgrade-Insecure-Requests':"1",
+            'Cookie':"CURRENT_FNVAL=16;CURRENT_QUALITY=80",
         }
         response = requests.get(url,headers=cls.AttachHeaders(header))
-        Download.files('{}\\{}.xml'.format(cls.downdir['cache'],videoname),response,'ISO-8859-1')
+        Download.files(f"{cls.downdir['cache']}\\{videoname}.xml",response,'ISO-8859-1')
 
 
     @classmethod
     def DownVideo(cls, d_videourl):
         videonamelist = []
         thread_list = []
-        # MultiThread
-        # with open("{}\\{}filelist.txt".format(cls.downdir['cache'],cls.tl.threadpoolname),"w+") as file:
-        #     for videopart,videourl in d_videourl.items():
-        #         t_dwonload = Thread(target = cls.StartDownVideo,kwargs={"namepath":"{}\\{}.mp4".format(cls.downdir['cache'],cls.tl.threadpoolname+str(videopart)),"videourl":videourl})
-        #         t_dwonload.setDaemon(True)
-        #         thread_list.append(t_dwonload)
-        #         videonamelist.append('{}\\{}.mp4'.format(cls.downdir['cache'],cls.tl.threadpoolname+str(videopart)))
-        #         t_dwonload.start()
-        #         file.writelines("file '{}.mp4'\n".format(cls.tl.threadpoolname+str(videopart)))
-        # for tlist in thread_list:
-        #     tlist.join()
 
         # ThreadPool
         with open("{}\\{}filelist.txt".format(cls.downdir['cache'],cls.tl.threadpoolname),"w+") as file:
@@ -304,6 +315,41 @@ class Bilibili:
         else:
             Bilibili.logger.info("clean complete")
 
+
+    @staticmethod
+    def ParseXml(assfile,xmlfile,speed = None):
+        xmlparser = xml2ass.GenerateAss(assfile,xmlfile,speed=speed)
+        xmlparser.run()
+
+    @classmethod
+    def Run(cls, url):
+        videoname, d_videourl, cid, _, _,= cls.ResquestMainWeb(url)
+        videoname = re.sub(r"[\\\/\:\*\?\"\<\>\|]+", "-", videoname)
+        cls.tl.threadpoolname = current_thread().name
+        Bilibili.logger.info("start download:{}".format(videoname))
+        cls.DownBarrages(cid,videoname)
+        st_download  = '{}\\{}.ass'.format(cls.downdir['downloaded'],videoname)
+        st_cache = '{}\\{}.xml'.format(cls.downdir['cache'],videoname)
+
+        t_ass = Thread(target=cls.ParseXml,args=(st_download,st_cache))
+        t_ass.start()
+        t_ass.join(5)
+      
+        sleep(1)
+        cls.DownVideo(d_videourl)
+        Bilibili.logger.info('download complete:{}'.format(videoname))
+        cls.MergeVideo(videoname)
+
+        if not os.path.exists('{}\\{}.ass'.format(cls.downdir['downloaded'],videoname)):
+            t_ass = Thread(target=cls.ParseXml,args=(st_download,st_cache,3))
+            t_ass.start()
+            t_ass.join(5)
+        if not os.path.exists('{}\\{}.ass'.format(cls.downdir['downloaded'],videoname)):
+            shutil.copyfile(st_cache,'{}\\{}.xml'.format(cls.downdir['downloaded'],videoname))
+            Bilibili.logger.error("'.xml' barrages transform to '.ass' failed:{}".format(videoname))
+            
+
+
     @classmethod
     def Down(cls, downlist=None):
         """downlist = ['1','3:6','7']
@@ -350,32 +396,6 @@ class Bilibili:
         # Bilibili.logger.info("all video download complete")
 
 
-    @staticmethod
-    def ParseXml(assfile,xmlfile):
-        xmlparser = xml2ass.GenerateAss(assfile,xmlfile)
-        xmlparser.run()
-
-    @classmethod
-    def Run(cls, url):
-        videoname, d_videourl, cid, _, _,= cls.ResquestMainWeb(url)
-        videoname = re.sub(r"[\\\/\:\*\?\"\<\>\|]+", "-", videoname)
-        cls.tl.threadpoolname = current_thread().name
-        Bilibili.logger.info("start download:{}".format(videoname))
-        cls.DownBarrages(cid,videoname)
-        st_download  = '{}\\{}.ass'.format(cls.downdir['downloaded'],videoname)
-        st_cache = '{}\\{}.xml'.format(cls.downdir['cache'],videoname)
-        try:
-            t_ass = Thread(target=cls.ParseXml,args=(st_download,st_cache))
-            t_ass.start()
-            t_ass.join(5)
-        except RuntimeError:
-            Bilibili.logger.error('xml barrages conver to ass failed:{}'.format(videoname))
-        sleep(1)
-        cls.DownVideo(d_videourl)
-        Bilibili.logger.info("download complete:{}".format(videoname))
-        cls.MergeVideo(videoname)
-
-
     @classmethod
     def Main(cls,debug_url = None,debug_downlist = None):
         cls.MakeDirs()
@@ -398,7 +418,7 @@ class Bilibili:
                 return
         else:
             url_list = debug_url
-        if not debug_downlist:
+        if not debug_downlist and not debug_url:
             if args.down_play_list:
                 for dp in args.down_play_list:
                     if re.findall(r"[^\d\:]", dp) and dp != 'all':

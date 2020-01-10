@@ -39,7 +39,7 @@ class XmlParse(object):
 
 
 class GenerateAss(object):
-    def __init__(self, assfile, xml, resx=None, resy=None):
+    def __init__(self, assfile, xml, speed=None, resx=None, resy=None):
         self.assfile = assfile
         if '.xml' in xml:
             xmldata = XmlParse(xml).xmlparse_file()
@@ -56,8 +56,10 @@ class GenerateAss(object):
             self.resy = 1080
         else:
             self.resy = resy
-
-        self.speed = 5
+        if not speed:
+            self.speed = speed
+        else:
+            self.speed = 5
 
     def writeass(self, data):
         with open(self.assfile, 'a',encoding = 'utf-8') as file:
