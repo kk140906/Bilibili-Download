@@ -1,7 +1,6 @@
 # Bilibili Download
 
-![](https://img.shields.io/badge/python%20version-3.8.1-green) 
-![](https://img.shields.io/badge/-Bilibili%20Download-blue）
+![](https://img.shields.io/badge/python%20version-3.8.1-green)
 
 - 安装必备模块:
   
