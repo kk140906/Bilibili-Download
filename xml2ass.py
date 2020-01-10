@@ -57,9 +57,9 @@ class GenerateAss(object):
         else:
             self.resy = resy
         if not speed:
-            self.speed = speed
-        else:
             self.speed = 5
+        else:
+            self.speed = speed
 
     def writeass(self, data):
         with open(self.assfile, 'a',encoding = 'utf-8') as file:
